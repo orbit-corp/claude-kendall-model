@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M/M/1 Queue Simulator</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <h1>M/M/1 Queue Simulator</h1>
+  <span class="subtitle">Poisson arrivals &lambda; &middot; Exponential service &mu; &middot; single server, FCFS, infinite buffer</span>
+</header>
+
+<main>
+  <!-- Controls -->
+  <section class="panel" id="controls" style="margin-bottom: 16px;">
+    <h2>Controls</h2>
+    <div class="ctrl-grid">
+      <div class="ctrl-item">
+        <label>Arrival rate &lambda; (per sim-second)</label>
+        <div class="val" id="lambdaVal">1.00</div>
+        <input type="range" id="lambda" min="0.05" max="3.00" step="0.05" value="1.00">
+      </div>
+      <div class="ctrl-item">
+        <label>Service rate &mu; (per sim-second)</label>
+        <div class="val" id="muVal">1.50</div>
+        <input type="range" id="mu" min="0.05" max="3.00" step="0.05" value="1.50">
+      </div>
+      <div class="ctrl-item">
+        <label>Simulation speed (&times; real-time)</label>
+        <div class="val" id="speedVal">1.0&times;</div>
+        <input type="range" id="speed" min="-1" max="2.3" step="0.05" value="0">
+        <div class="hint">Logarithmic: 0.1&times; &ndash; 200&times;</div>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button id="playBtn" class="primary">&#9654; Play</button>
+      <button id="stepBtn">Step (1 event)</button>
+      <button id="arriveBtn">Force arrival</button>
+      <button id="departBtn">Force departure</button>
+      <button id="resetBtn" class="danger">Reset</button>
+    </div>
+  </section>
+
+  <div id="stability" class="stable">
+    <span class="dot"></span>
+    <span id="stabilityText">Stable: &rho; = 0.667 &lt; 1</span>
+  </div>
+
+  <!-- Queue visualization + stats -->
+  <div class="grid-12">
+    <section class="panel">
+      <h2>Queue &mdash; live state</h2>
+      <div class="canvas-wrap"><canvas id="queueCanvas"></canvas></div>
+      <div class="legend">
+        <span><span class="sw" style="background: var(--server)"></span>Server (busy)</span>
+        <span><span class="sw" style="background: var(--customer-wait)"></span>Waiting customers</span>
+        <span><span class="sw" style="background: #e5e7eb"></span>Server (idle)</span>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Metrics</h2>
+      <table class="stats">
+        <tr class="hdr"><td>Quantity</td><td>Empirical</td><td>Theory</td></tr>
+        <tr><td>Traffic intensity &rho;</td><td id="rhoEmp">&mdash;</td><td id="rhoTh">0.667</td></tr>
+        <tr><td>Mean # in system L</td><td id="LEmp">&mdash;</td><td id="LTh">2.000</td></tr>
+        <tr><td>Mean # in queue L<sub>q</sub></td><td id="LqEmp">&mdash;</td><td id="LqTh">1.333</td></tr>
+        <tr><td>Mean sojourn W</td><td id="WEmp">&mdash;</td><td id="WTh">2.000</td></tr>
+        <tr><td>Mean wait W<sub>q</sub></td><td id="WqEmp">&mdash;</td><td id="WqTh">1.333</td></tr>
+        <tr><td>Idle prob. &pi;<sub>0</sub></td><td id="p0Emp">&mdash;</td><td id="p0Th">0.333</td></tr>
+        <tr class="hdr"><td>Counters</td><td></td><td></td></tr>
+        <tr><td>Sim time</td><td colspan="2" id="simTime" style="text-align:right">0.00</td></tr>
+        <tr><td>Arrivals</td><td colspan="2" id="nArr" style="text-align:right">0</td></tr>
+        <tr><td>Departures</td><td colspan="2" id="nDep" style="text-align:right">0</td></tr>
+        <tr><td>Now in system X(t)</td><td colspan="2" id="nowN" style="text-align:right">0</td></tr>
+      </table>
+    </section>
+  </div>
+
+  <!-- Time series + distribution -->
+  <div class="grid-11">
+    <section class="panel">
+      <h2>Queue length X(t) &mdash; rolling window</h2>
+      <div class="canvas-wrap"><canvas id="tsCanvas"></canvas></div>
+      <div class="legend">
+        <span><span class="sw" style="background: var(--accent)"></span>X(t)</span>
+        <span><span class="sw" style="background: var(--err)"></span>Theoretical L = &rho;/(1&minus;&rho;)</span>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>State distribution &pi;<sub>k</sub></h2>
+      <div class="canvas-wrap"><canvas id="distCanvas"></canvas></div>
+      <div class="legend">
+        <span><span class="sw" style="background: var(--customer)"></span>Empirical</span>
+        <span><span class="sw" style="background: var(--err)"></span>Theoretical (1&minus;&rho;)&rho;<sup>k</sup></span>
+      </div>
+    </section>
+  </div>
+
+  <!-- Burke + log -->
+  <div class="grid-11">
+    <section class="panel">
+      <h2>Departure inter-arrivals &mdash; Burke's theorem</h2>
+      <div class="canvas-wrap"><canvas id="burkeCanvas"></canvas></div>
+      <div class="legend">
+        <span><span class="sw" style="background: var(--ok)"></span>Empirical histogram</span>
+        <span><span class="sw" style="background: var(--err)"></span>Exp(&lambda;) pdf (predicted)</span>
+      </div>
+      <div class="hint">In stationary M/M/1 with &rho;&lt;1, departures form a Poisson(&lambda;) process &mdash; inter-departure times should match Exp(&lambda;).</div>
+    </section>
+    <section class="panel">
+      <h2>Event log</h2>
+      <ul id="logList"></ul>
+    </section>
+  </div>
+</main>
+
+<footer>
+  M/M/1 simulator &mdash; inverse-CDF exponential RNG, discrete-event engine, time-averaged statistics.
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>
