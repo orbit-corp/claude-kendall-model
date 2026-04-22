@@ -64,17 +64,17 @@
       <h2>Metrics</h2>
       <table class="stats">
         <tr class="hdr"><td>Quantity</td><td>Empirical</td><td>Theory</td></tr>
-        <tr><td>Traffic intensity &rho;</td><td id="rhoEmp">&mdash;</td><td id="rhoTh">0.667</td></tr>
-        <tr><td>Mean # in system L</td><td id="LEmp">&mdash;</td><td id="LTh">2.000</td></tr>
-        <tr><td>Mean # in queue L<sub>q</sub></td><td id="LqEmp">&mdash;</td><td id="LqTh">1.333</td></tr>
-        <tr><td>Mean sojourn W</td><td id="WEmp">&mdash;</td><td id="WTh">2.000</td></tr>
-        <tr><td>Mean wait W<sub>q</sub></td><td id="WqEmp">&mdash;</td><td id="WqTh">1.333</td></tr>
-        <tr><td>Idle prob. &pi;<sub>0</sub></td><td id="p0Emp">&mdash;</td><td id="p0Th">0.333</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Long-run server load. In M/M/1 theory, rho = lambda/mu, so it tells you whether work arrives slower or faster than the server can clear it.">Traffic intensity &rho;</span></td><td id="rhoEmp">&mdash;</td><td id="rhoTh">0.667</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Average number of customers in the whole system, including anyone in service. Use it to judge total congestion, not just the waiting line.">Mean # in system L</span></td><td id="LEmp">&mdash;</td><td id="LTh">2.000</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Average number of customers waiting for service. This isolates queue buildup without counting the job currently being served.">Mean # in queue L<sub>q</sub></span></td><td id="LqEmp">&mdash;</td><td id="LqTh">1.333</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Average total time a customer spends in the system from arrival to departure. It is the end-to-end delay seen by a customer.">Mean sojourn W</span></td><td id="WEmp">&mdash;</td><td id="WTh">2.000</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Average time a customer waits before service begins. It measures queueing delay alone, separate from service time.">Mean wait W<sub>q</sub></span></td><td id="WqEmp">&mdash;</td><td id="WqTh">1.333</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Probability that the system is empty. It shows how often the server has no job to work on.">Idle prob. &pi;<sub>0</sub></span></td><td id="p0Emp">&mdash;</td><td id="p0Th">0.333</td></tr>
         <tr class="hdr"><td>Counters</td><td></td><td></td></tr>
-        <tr><td>Sim time</td><td colspan="2" id="simTime" style="text-align:right">0.00</td></tr>
-        <tr><td>Arrivals</td><td colspan="2" id="nArr" style="text-align:right">0</td></tr>
-        <tr><td>Departures</td><td colspan="2" id="nDep" style="text-align:right">0</td></tr>
-        <tr><td>Now in system X(t)</td><td colspan="2" id="nowN" style="text-align:right">0</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Current position of the simulation clock. It tells you how long the queue has been evolving in simulated time.">Sim time</span></td><td colspan="2" id="simTime" style="text-align:right">0.00</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Number of arrival events observed so far. It tracks the total input flow into the queue.">Arrivals</span></td><td colspan="2" id="nArr" style="text-align:right">0</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Number of completed services so far. It tracks the output flow leaving the queue.">Departures</span></td><td colspan="2" id="nDep" style="text-align:right">0</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Current number of customers in the system, including anyone in service. It is the live state driving the queue diagram and charts.">Now in system X(t)</span></td><td colspan="2" id="nowN" style="text-align:right">0</td></tr>
       </table>
     </section>
   </div>
