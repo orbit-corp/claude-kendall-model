@@ -36,6 +36,61 @@ const state = {
   logMax: 100,
 };
 
+const transientCache = {
+  key: null,
+  computedAt: 0,
+  result: null,
+};
+
+const THEME_STORAGE_KEY = 'mm1-theme';
+
+function getThemeValue(name) {
+  return getComputedStyle(document.body).getPropertyValue(name).trim();
+}
+
+function getThemePalette() {
+  return {
+    canvasBg: getThemeValue('--canvas-bg'),
+    grid: getThemeValue('--canvas-grid'),
+    axis: getThemeValue('--canvas-axis'),
+    text: getThemeValue('--canvas-text'),
+    muted: getThemeValue('--canvas-muted'),
+    line: getThemeValue('--canvas-line'),
+    accent: getThemeValue('--accent'),
+    err: getThemeValue('--err'),
+    ok: getThemeValue('--ok'),
+    okFill: getThemeValue('--ok-fill'),
+    server: getThemeValue('--server'),
+    customer: getThemeValue('--customer'),
+    customerWait: getThemeValue('--customer-wait'),
+    serverIdle: getThemeValue('--server-idle'),
+    onAccent: getThemeValue('--canvas-on-accent'),
+    arrow: getThemeValue('--arrow'),
+  };
+}
+
+function syncThemeToggle() {
+  const button = document.getElementById('themeToggle');
+  if (!button) return;
+  const isDark = document.body.dataset.theme !== 'light';
+  button.textContent = isDark ? 'Light mode' : 'Dark mode';
+  button.setAttribute('aria-pressed', String(isDark));
+  button.setAttribute('aria-label', isDark ? 'Switch to light mode' : 'Switch to dark mode');
+}
+
+function applyTheme(mode, persist = true) {
+  const nextTheme = mode === 'light' ? 'light' : 'dark';
+  document.body.dataset.theme = nextTheme;
+  if (persist) localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+  syncThemeToggle();
+  render();
+}
+
+function initTheme() {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  applyTheme(stored === 'light' ? 'light' : 'dark', false);
+}
+
 // ---- Random helpers ----
 function expRand(rate) {
   // inverse-CDF sampler for Exp(rate)
@@ -59,6 +114,8 @@ function reset() {
   state.lastDepartureT = null;
   state.interDepartures = [];
   state.log = [];
+  transientCache.key = null;
+  transientCache.result = null;
   document.getElementById('logList').innerHTML = '';
   scheduleNextArrival();
   state.nextDepartureT = Infinity;
@@ -218,8 +275,9 @@ function renderQueueVisual() {
   const canvas = document.getElementById('queueCanvas');
   const { w, h } = fitCanvas(canvas);
   const ctx = canvas.getContext('2d');
+  const colors = getThemePalette();
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = '#fafbfc';
+  ctx.fillStyle = colors.canvasBg;
   ctx.fillRect(0, 0, w, h);
 
   const cx = w - 70;     // server center x
@@ -227,24 +285,24 @@ function renderQueueVisual() {
   const r = 26;
   // Server box
   ctx.lineWidth = 2;
-  ctx.strokeStyle = '#94a3b8';
-  ctx.fillStyle = state.inService ? '#2563eb' : '#e5e7eb';
+  ctx.strokeStyle = colors.line;
+  ctx.fillStyle = state.inService ? colors.server : colors.serverIdle;
   ctx.beginPath();
   ctx.roundRect(cx - r, cy - r, 2*r, 2*r, 8);
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = state.inService ? '#fff' : '#64748b';
+  ctx.fillStyle = state.inService ? colors.onAccent : colors.muted;
   ctx.font = '600 11px -apple-system, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(state.inService ? `#${state.inService.id}` : 'idle', cx, cy);
   // "Server" label
-  ctx.fillStyle = '#64748b';
+  ctx.fillStyle = colors.muted;
   ctx.font = '11px -apple-system, sans-serif';
   ctx.fillText('Server', cx, cy + r + 14);
 
   // Arrow from queue to server
-  ctx.strokeStyle = '#cbd5e1';
+  ctx.strokeStyle = colors.arrow;
   ctx.beginPath();
   ctx.moveTo(cx - r - 20, cy);
   ctx.lineTo(cx - r - 4, cy);
@@ -254,7 +312,7 @@ function renderQueueVisual() {
   ctx.lineTo(cx - r - 10, cy - 4);
   ctx.lineTo(cx - r - 10, cy + 4);
   ctx.closePath();
-  ctx.fillStyle = '#cbd5e1';
+  ctx.fillStyle = colors.arrow;
   ctx.fill();
 
   // Waiting customers line
@@ -266,8 +324,8 @@ function renderQueueVisual() {
     if (x < 20) break;
     ctx.beginPath();
     ctx.arc(x, cy, 9, 0, 2 * Math.PI);
-    ctx.fillStyle = '#93c5fd';
-    ctx.strokeStyle = '#60a5fa';
+    ctx.fillStyle = colors.customerWait;
+    ctx.strokeStyle = colors.customer;
     ctx.lineWidth = 1.5;
     ctx.fill();
     ctx.stroke();
@@ -275,13 +333,13 @@ function renderQueueVisual() {
   // "+N more" if overflow
   if (qCount > 25) {
     const x = qStart - 25 * qSpacing;
-    ctx.fillStyle = '#64748b';
+    ctx.fillStyle = colors.muted;
     ctx.textAlign = 'left';
     ctx.font = '11px -apple-system, sans-serif';
     ctx.fillText(`+${qCount - 25} more`, Math.max(x, 8), cy);
   }
   // Queue label
-  ctx.fillStyle = '#64748b';
+  ctx.fillStyle = colors.muted;
   ctx.textAlign = 'left';
   ctx.font = '11px -apple-system, sans-serif';
   ctx.fillText(`Waiting: ${qCount}`, 12, 20);
@@ -369,6 +427,7 @@ function renderTimeSeries() {
   const canvas = document.getElementById('tsCanvas');
   const { w, h } = fitCanvas(canvas);
   const ctx = canvas.getContext('2d');
+  const colors = getThemePalette();
   ctx.clearRect(0, 0, w, h);
   const padL = 38, padR = 8, padT = 10, padB = 24;
   const plotW = w - padL - padR;
@@ -386,10 +445,10 @@ function renderTimeSeries() {
   maxX = Math.max(5, Math.ceil(maxX * 1.15));
 
   // Grid
-  ctx.strokeStyle = '#f1f3f7';
+  ctx.strokeStyle = colors.grid;
   ctx.lineWidth = 1;
   const yTicks = 5;
-  ctx.fillStyle = '#94a3b8';
+  ctx.fillStyle = colors.axis;
   ctx.font = '10px -apple-system, sans-serif';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
@@ -413,9 +472,9 @@ function renderTimeSeries() {
     ctx.beginPath();
     ctx.moveTo(x, padT + plotH);
     ctx.lineTo(x, padT + plotH + 3);
-    ctx.strokeStyle = '#cbd5e1';
+    ctx.strokeStyle = colors.line;
     ctx.stroke();
-    ctx.fillStyle = '#94a3b8';
+    ctx.fillStyle = colors.axis;
     ctx.fillText(t.toFixed(1), x, padT + plotH + 5);
   }
 
@@ -425,7 +484,7 @@ function renderTimeSeries() {
     const L = rho / (1 - rho);
     if (L <= maxX) {
       const y = padT + plotH - (L / maxX) * plotH;
-      ctx.strokeStyle = '#ef4444';
+      ctx.strokeStyle = colors.err;
       ctx.setLineDash([4, 4]);
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -433,7 +492,7 @@ function renderTimeSeries() {
       ctx.lineTo(padL + plotW, y);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = '#ef4444';
+      ctx.fillStyle = colors.err;
       ctx.textAlign = 'right';
       ctx.fillText(`L=${L.toFixed(2)}`, padL + plotW - 2, y - 5);
     }
@@ -442,7 +501,7 @@ function renderTimeSeries() {
   // Step plot (horizontal-then-vertical segments)
   const tToX = (t) => padL + ((t - tMin) / ((tNow - tMin) || 1)) * plotW;
   const vToY = (v) => padT + plotH - (v / maxX) * plotH;
-  ctx.strokeStyle = '#2563eb';
+  ctx.strokeStyle = colors.accent;
   ctx.lineWidth = 1.6;
   ctx.beginPath();
   let prev = null;
@@ -468,7 +527,7 @@ function renderTimeSeries() {
   ctx.stroke();
 
   // Axis labels
-  ctx.fillStyle = '#64748b';
+  ctx.fillStyle = colors.text;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillText('X(t)', 4, padT);
@@ -481,6 +540,7 @@ function renderDistribution() {
   const canvas = document.getElementById('distCanvas');
   const { w, h } = fitCanvas(canvas);
   const ctx = canvas.getContext('2d');
+  const colors = getThemePalette();
   ctx.clearRect(0, 0, w, h);
   const padL = 30, padR = 8, padT = 10, padB = 24;
   const plotW = w - padL - padR;
@@ -511,8 +571,8 @@ function renderDistribution() {
   const maxVal = Math.max(0.05, ...emp, ...theory);
 
   // y-axis grid
-  ctx.strokeStyle = '#f1f3f7';
-  ctx.fillStyle = '#94a3b8';
+  ctx.strokeStyle = colors.grid;
+  ctx.fillStyle = colors.axis;
   ctx.font = '10px -apple-system, sans-serif';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
@@ -532,12 +592,12 @@ function renderDistribution() {
     const barW = Math.max(2, binW - 4);
     const barY = padT + plotH - (emp[k] / maxVal) * plotH;
     const barH = padT + plotH - barY;
-    ctx.fillStyle = '#60a5fa';
+    ctx.fillStyle = colors.customer;
     ctx.fillRect(barX, barY, barW, barH);
     // theoretical marker
     if (stable) {
       const ty = padT + plotH - (theory[k] / maxVal) * plotH;
-      ctx.strokeStyle = '#ef4444';
+      ctx.strokeStyle = colors.err;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(barX, ty);
@@ -546,7 +606,7 @@ function renderDistribution() {
     }
   }
   // x-axis labels
-  ctx.fillStyle = '#94a3b8';
+  ctx.fillStyle = colors.axis;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   const step = Math.max(1, Math.ceil(maxK / 10));
@@ -557,8 +617,213 @@ function renderDistribution() {
   ctx.textAlign = 'left';
   ctx.fillText('k', padL, h - 12);
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#64748b';
+  ctx.fillStyle = colors.text;
   ctx.fillText('π_k', 4, padT);
+}
+
+function applyEmbeddedBirthDeathStep(dist, upP, downP) {
+  const K = dist.length - 1;
+  const next = new Array(dist.length).fill(0);
+  next[0] = dist[0] * (1 - upP) + (dist[1] || 0) * downP;
+  for (let k = 1; k < K; k++) {
+    next[k] = dist[k - 1] * upP + dist[k + 1] * downP;
+  }
+  next[K] = dist[K - 1] * upP + dist[K] * upP;
+  return next;
+}
+
+function propagateUniformizedChunk(dist, lambda, mu, dt) {
+  const nu = lambda + mu;
+  if (dt <= 0 || nu <= 0) return dist.slice();
+  const upP = lambda / nu;
+  const downP = mu / nu;
+  const mean = nu * dt;
+  const maxTerms = Math.max(18, Math.ceil(mean + 10 * Math.sqrt(mean + 1) + 10));
+  let weight = Math.exp(-mean);
+  let usedWeight = weight;
+  let chain = dist.slice();
+  const accum = chain.map((v) => v * weight);
+  for (let n = 1; n <= maxTerms; n++) {
+    weight *= mean / n;
+    chain = applyEmbeddedBirthDeathStep(chain, upP, downP);
+    usedWeight += weight;
+    for (let i = 0; i < accum.length; i++) {
+      accum[i] += weight * chain[i];
+    }
+    if (n > mean + 6 * Math.sqrt(mean + 1) && weight < 1e-12) break;
+  }
+  if (usedWeight > 0 && Math.abs(usedWeight - 1) > 1e-9) {
+    const scale = 1 / usedWeight;
+    for (let i = 0; i < accum.length; i++) accum[i] *= scale;
+  }
+  return accum;
+}
+
+function computeTransientDistribution(lambda, mu, t) {
+  const rho = lambda / mu;
+  const stable = rho < 1;
+  const safeT = Math.max(0, t);
+  const steadyMean = stable ? rho / Math.max(1e-9, 1 - rho) : 0;
+  const steadyVar = stable ? rho / Math.max(1e-9, (1 - rho) * (1 - rho)) : 0;
+  const supportGuess = stable
+    ? steadyMean + 8 * Math.sqrt(steadyVar + 1) + 18
+    : Math.max(40, lambda * safeT + 8 * Math.sqrt(lambda * safeT + 1) + 18);
+  const internalK = Math.max(40, Math.min(320, Math.ceil(supportGuess)));
+  let dist = new Array(internalK + 1).fill(0);
+  dist[0] = 1;
+
+  const nu = lambda + mu;
+  const meanPerChunk = 28;
+  let remaining = safeT;
+  while (remaining > 1e-9) {
+    const dt = nu > 0 ? Math.min(remaining, meanPerChunk / nu) : remaining;
+    dist = propagateUniformizedChunk(dist, lambda, mu, dt);
+    const total = dist.reduce((sum, value) => sum + value, 0);
+    if (total > 0) dist = dist.map((value) => value / total);
+    remaining -= dt;
+  }
+
+  const minDisplayK = 10;
+  const maxDisplayK = 18;
+  let idealK = minDisplayK;
+  let cumulative = 0;
+  for (let k = 0; k < dist.length; k++) {
+    cumulative += dist[k];
+    if (k >= minDisplayK && cumulative >= 0.995) {
+      idealK = k;
+      break;
+    }
+    idealK = k;
+  }
+  if (stable) {
+    let steadyK = minDisplayK;
+    while (steadyK < dist.length - 1 && (1 - rho) * Math.pow(rho, steadyK) > 0.002) steadyK++;
+    idealK = Math.max(idealK, steadyK);
+  }
+  const displayK = Math.min(maxDisplayK, Math.max(minDisplayK, idealK));
+  const transient = dist.slice(0, displayK + 1);
+  const steady = stable
+    ? Array.from({ length: displayK + 1 }, (_, k) => (1 - rho) * Math.pow(rho, k))
+    : [];
+  const shownMass = transient.reduce((sum, value) => sum + value, 0);
+  const hiddenMass = Math.max(0, 1 - shownMass);
+  let maxDiff = 0;
+  if (stable) {
+    for (let k = 0; k < transient.length; k++) {
+      maxDiff = Math.max(maxDiff, Math.abs(transient[k] - steady[k]));
+    }
+  }
+  return {
+    transient,
+    steady,
+    displayK,
+    hiddenMass,
+    stable,
+    rho,
+    sampleTime: safeT,
+    closeToSteady: stable && maxDiff < 0.015,
+  };
+}
+
+function getTransientSnapshot() {
+  const tQuantum = state.running ? 0.25 : 0.05;
+  const sampledT = Math.max(0, Math.round(state.simTime / tQuantum) * tQuantum);
+  const key = `${state.lambda.toFixed(3)}|${state.mu.toFixed(3)}|${sampledT.toFixed(2)}`;
+  const now = performance.now();
+  if (transientCache.key === key && transientCache.result) return transientCache.result;
+  if (state.running && transientCache.result && now - transientCache.computedAt < 120) {
+    return transientCache.result;
+  }
+  const result = computeTransientDistribution(state.lambda, state.mu, sampledT);
+  transientCache.key = key;
+  transientCache.computedAt = now;
+  transientCache.result = result;
+  return result;
+}
+
+function renderTransientDistribution() {
+  const canvas = document.getElementById('transientCanvas');
+  if (!canvas) return;
+  const hint = document.getElementById('transientHint');
+  const { w, h } = fitCanvas(canvas);
+  const ctx = canvas.getContext('2d');
+  const colors = getThemePalette();
+  ctx.clearRect(0, 0, w, h);
+  const padL = 30, padR = 10, padT = 10, padB = 24;
+  const plotW = w - padL - padR;
+  const plotH = h - padT - padB;
+  const snapshot = getTransientSnapshot();
+  const { transient, steady, displayK, hiddenMass, stable, rho, sampleTime, closeToSteady } = snapshot;
+  const maxVal = Math.max(0.05, ...transient, ...steady);
+
+  ctx.strokeStyle = colors.grid;
+  ctx.fillStyle = colors.axis;
+  ctx.font = '10px -apple-system, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= 5; i++) {
+    const y = padT + plotH - (i / 5) * plotH;
+    const v = (i / 5) * maxVal;
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(padL + plotW, y);
+    ctx.stroke();
+    ctx.fillText(v.toFixed(2), padL - 4, y);
+  }
+
+  const binW = plotW / (displayK + 1);
+  for (let k = 0; k <= displayK; k++) {
+    const barX = padL + k * binW + 2;
+    const barW = Math.max(2, binW - 4);
+    const barY = padT + plotH - (transient[k] / maxVal) * plotH;
+    const barH = padT + plotH - barY;
+    ctx.fillStyle = colors.accent;
+    ctx.fillRect(barX, barY, barW, barH);
+    if (stable) {
+      const ty = padT + plotH - (steady[k] / maxVal) * plotH;
+      ctx.strokeStyle = colors.err;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(barX, ty);
+      ctx.lineTo(barX + barW, ty);
+      ctx.stroke();
+    }
+  }
+
+  ctx.fillStyle = colors.axis;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  const step = Math.max(1, Math.ceil(displayK / 10));
+  for (let k = 0; k <= displayK; k += step) {
+    const x = padL + k * binW + binW / 2;
+    ctx.fillText(k, x, padT + plotH + 4);
+  }
+  ctx.textAlign = 'left';
+  ctx.fillText('k', padL, h - 12);
+  ctx.fillStyle = colors.text;
+  ctx.fillText('P_k(t)', 4, padT);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = colors.axis;
+  ctx.fillText(`t=${sampleTime.toFixed(2)}`, w - 6, padT + 4);
+
+  if (hint) {
+    let message;
+    if (sampleTime === 0) {
+      message = 'At t=0 the queue starts empty, so all of the probability mass sits at k=0: P0(0)=1.';
+    } else if (!stable) {
+      message = `This is the transient law P(X(t)=k) from X(0)=0 under the current λ and μ. Because ρ=${rho.toFixed(3)} ≥ 1, there is no steady-state πk to converge to.`;
+    } else if (closeToSteady) {
+      message = 'At this t, the transient bars are already close to the steady-state reference πk = (1−ρ)ρ^k.';
+    } else {
+      message = 'These bars show the exact time-t distribution P(X(t)=k) from an empty start. Unlike the πk panel, this is about one chosen time, not long-run occupancy.';
+    }
+    if (hiddenMass > 0.01) {
+      const pct = hiddenMass * 100;
+      message += ` About ${pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)}% of the mass lies above the largest state shown.`;
+    }
+    message += ' Reset after changing λ or μ if you want this panel to match the live run exactly.';
+    hint.textContent = message;
+  }
 }
 
 // Burke's theorem: departure-interarrival histogram vs Exp(λ)
@@ -566,6 +831,7 @@ function renderBurke() {
   const canvas = document.getElementById('burkeCanvas');
   const { w, h } = fitCanvas(canvas);
   const ctx = canvas.getContext('2d');
+  const colors = getThemePalette();
   ctx.clearRect(0, 0, w, h);
   const padL = 30, padR = 8, padT = 10, padB = 24;
   const plotW = w - padL - padR;
@@ -592,8 +858,8 @@ function renderBurke() {
   maxVal = maxVal * 1.05 || 1;
 
   // grid
-  ctx.strokeStyle = '#f1f3f7';
-  ctx.fillStyle = '#94a3b8';
+  ctx.strokeStyle = colors.grid;
+  ctx.fillStyle = colors.axis;
   ctx.font = '10px -apple-system, sans-serif';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
@@ -612,11 +878,11 @@ function renderBurke() {
     const barX = padL + i * pxPerBin + 1;
     const bw = Math.max(2, pxPerBin - 2);
     const y = padT + plotH - (empDen[i] / maxVal) * plotH;
-    ctx.fillStyle = 'rgba(16,185,129,0.75)';
+    ctx.fillStyle = colors.okFill;
     ctx.fillRect(barX, y, bw, padT + plotH - y);
   }
   // exponential pdf
-  ctx.strokeStyle = '#ef4444';
+  ctx.strokeStyle = colors.err;
   ctx.lineWidth = 2;
   ctx.beginPath();
   const steps = 100;
@@ -630,7 +896,7 @@ function renderBurke() {
   ctx.stroke();
 
   // x-axis labels
-  ctx.fillStyle = '#94a3b8';
+  ctx.fillStyle = colors.axis;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   for (let i = 0; i <= 5; i++) {
@@ -638,13 +904,13 @@ function renderBurke() {
     const v = (i / 5) * xMax;
     ctx.fillText(v.toFixed(2), x, padT + plotH + 4);
   }
-  ctx.fillStyle = '#64748b';
+  ctx.fillStyle = colors.text;
   ctx.textAlign = 'right';
   ctx.fillText('Δ_dep (sim-s)', w - 4, h - 12);
   ctx.textAlign = 'left';
   ctx.fillText('density', 4, padT);
   // sample size
-  ctx.fillStyle = '#94a3b8';
+  ctx.fillStyle = colors.axis;
   ctx.textAlign = 'right';
   ctx.fillText(`n=${total}`, w - 6, padT + 4);
 }
@@ -655,6 +921,7 @@ function render() {
   renderStability();
   renderTimeSeries();
   renderDistribution();
+  renderTransientDistribution();
   renderBurke();
 }
 
@@ -702,6 +969,11 @@ function updateSpeed(logVal) {
   document.getElementById('speedVal').textContent = v < 1 ? `${v.toFixed(2)}×` : `${v.toFixed(1)}×`;
 }
 
+document.getElementById('themeToggle').addEventListener('click', () => {
+  const nextTheme = document.body.dataset.theme === 'light' ? 'dark' : 'light';
+  applyTheme(nextTheme);
+});
+
 document.getElementById('lambda').addEventListener('input', e => updateLambda(parseFloat(e.target.value)));
 document.getElementById('mu').addEventListener('input',     e => updateMu(parseFloat(e.target.value)));
 document.getElementById('speed').addEventListener('input',  e => updateSpeed(parseFloat(e.target.value)));
@@ -731,6 +1003,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Init
+initTheme();
 updateLambda(parseFloat(document.getElementById('lambda').value));
 updateMu(parseFloat(document.getElementById('mu').value));
 updateSpeed(parseFloat(document.getElementById('speed').value));

@@ -4,13 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>M/M/1 Queue Simulator</title>
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=20260422-theme-2">
 </head>
-<body>
+<body data-theme="dark">
 
 <header>
   <h1>M/M/1 Queue Simulator</h1>
-  <span class="subtitle">Poisson arrivals &lambda; &middot; Exponential service &mu; &middot; single server, FCFS, infinite buffer</span>
+  <div class="header-actions">
+    <span class="subtitle">Poisson arrivals &lambda; &middot; Exponential service &mu; &middot; single server, FCFS, infinite buffer</span>
+    <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="true" aria-label="Switch to light mode">Light mode</button>
+  </div>
 </header>
 
 <main>
@@ -57,7 +60,7 @@
       <div class="legend">
         <span><span class="sw" style="background: var(--server)"></span>Server (busy)</span>
         <span><span class="sw" style="background: var(--customer-wait)"></span>Waiting customers</span>
-        <span><span class="sw" style="background: #e5e7eb"></span>Server (idle)</span>
+        <span><span class="sw" style="background: var(--server-idle)"></span>Server (idle)</span>
       </div>
     </section>
     <section class="panel">
@@ -99,6 +102,18 @@
     </section>
   </div>
 
+  <section class="panel" style="margin-bottom: 16px;">
+    <h2>Transient state probabilities P<sub>k</sub>(t)</h2>
+    <div class="canvas-wrap"><canvas id="transientCanvas"></canvas></div>
+    <div class="legend">
+      <span><span class="sw" style="background: var(--accent)"></span>Transient P(X(t)=k)</span>
+      <span><span class="sw" style="background: var(--err)"></span>Steady-state &pi;<sub>k</sub></span>
+    </div>
+    <div class="hint" id="transientHint">
+      Computed from the forward equations with X(0)=0 using the current &lambda;, &mu;, and displayed t.
+    </div>
+  </section>
+
   <!-- Burke + log -->
   <div class="grid-11">
     <section class="panel">
@@ -121,6 +136,6 @@
   M/M/1 simulator &mdash; inverse-CDF exponential RNG, discrete-event engine, time-averaged statistics.
 </footer>
 
-<script src="app.js" defer></script>
+<script src="app.js?v=20260422-theme-1" defer></script>
 </body>
 </html>
