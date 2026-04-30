@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>M/M/1 Queue Simulator</title>
-<link rel="stylesheet" href="styles.css?v=20260422-theme-2">
+<link rel="stylesheet" href="styles.css?v=20260430-batch-arrivals-1">
 </head>
 <body data-theme="dark">
 
@@ -41,7 +41,13 @@
     <div class="btn-row">
       <button id="playBtn" class="primary">&#9654; Play</button>
       <button id="stepBtn">Step (1 event)</button>
-      <button id="arriveBtn">Force arrival</button>
+      <div class="batch-arrival-control">
+        <label for="arrivalsPerForce">Forced arrivals at once</label>
+        <div class="batch-arrival-inputs">
+          <input type="number" id="arrivalsPerForce" min="1" step="1" value="1" inputmode="numeric">
+          <button id="arriveBtn">Force arrivals</button>
+        </div>
+      </div>
       <button id="departBtn">Force departure</button>
       <button id="resetBtn" class="danger">Reset</button>
     </div>
@@ -67,7 +73,8 @@
       <h2>Metrics</h2>
       <table class="stats">
         <tr class="hdr"><td>Quantity</td><td>Empirical</td><td>Theory</td></tr>
-        <tr><td><span class="metric-note" tabindex="0" data-note="Long-run server load. In M/M/1 theory, rho = lambda/mu, so it tells you whether work arrives slower or faster than the server can clear it.">Traffic intensity &rho;</span></td><td id="rhoEmp">&mdash;</td><td id="rhoTh">0.667</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Long-run server load. In M/M/1 theory, rho = lambda/mu, so the theory column uses the slider values. Manual forced arrivals do not rewrite lambda itself, but they can still push the empirical system behavior away from theory.">Traffic intensity &rho;</span></td><td id="rhoEmp">&mdash;</td><td id="rhoTh">0.667</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Observed arrival throughput so far, computed as total arrivals divided by elapsed simulated time. This lets manual forced-arrival bursts show up directly in the dashboard.">Realized arrival rate &lambda;̂</span></td><td id="lambdaRealEmp">&mdash;</td><td id="lambdaRealTh">1.000</td></tr>
         <tr><td><span class="metric-note" tabindex="0" data-note="Average number of customers in the whole system, including anyone in service. Use it to judge total congestion, not just the waiting line.">Mean # in system L</span></td><td id="LEmp">&mdash;</td><td id="LTh">2.000</td></tr>
         <tr><td><span class="metric-note" tabindex="0" data-note="Average number of customers waiting for service. This isolates queue buildup without counting the job currently being served.">Mean # in queue L<sub>q</sub></span></td><td id="LqEmp">&mdash;</td><td id="LqTh">1.333</td></tr>
         <tr><td><span class="metric-note" tabindex="0" data-note="Average total time a customer spends in the system from arrival to departure. It is the end-to-end delay seen by a customer.">Mean sojourn W</span></td><td id="WEmp">&mdash;</td><td id="WTh">2.000</td></tr>
@@ -136,6 +143,6 @@
   M/M/1 simulator &mdash; inverse-CDF exponential RNG, discrete-event engine, time-averaged statistics.
 </footer>
 
-<script src="app.js?v=20260422-theme-1" defer></script>
+<script src="app.js?v=20260430-batch-arrivals-1" defer></script>
 </body>
 </html>

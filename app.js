@@ -155,24 +155,28 @@ function logEvent(type, info) {
   while (ul.childNodes.length > state.logMax) ul.removeChild(ul.lastChild);
 }
 
-// ---- Event processing ----
-function processArrival() {
-  accumulateTime(state.nextArrivalT);
-  state.simTime = state.nextArrivalT;
-  const c = { id: state.nextId++, arriveT: state.simTime };
+function createArrivalAt(time) {
+  const c = { id: state.nextId++, arriveT: time };
   state.arrivals++;
   if (state.inService === null) {
-    // server is idle: start service immediately
-    c.serviceStartT = state.simTime;
+    c.serviceStartT = time;
     c.serviceTime = expRand(state.mu);
-    c.departT = state.simTime + c.serviceTime;
+    c.departT = time + c.serviceTime;
     state.inService = c;
     state.nextDepartureT = c.departT;
   } else {
     state.queue.push(c);
   }
   state.N++;
-  pushHistory(state.simTime, state.N);
+  pushHistory(time, state.N);
+  return c;
+}
+
+// ---- Event processing ----
+function processArrival() {
+  accumulateTime(state.nextArrivalT);
+  state.simTime = state.nextArrivalT;
+  const c = createArrivalAt(state.simTime);
   scheduleNextArrival();
   logEvent('arrive', `arrival #${c.id} → X=${state.N}`);
 }
@@ -241,9 +245,29 @@ function stepOneEvent() {
   render();
 }
 
-function forceArrival() {
-  state.nextArrivalT = state.simTime;
-  processArrival();
+function sanitizeForcedArrivalCount(rawValue) {
+  const parsed = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function getForcedArrivalCount() {
+  const input = document.getElementById('arrivalsPerForce');
+  const count = sanitizeForcedArrivalCount(input.value);
+  input.value = String(count);
+  return count;
+}
+
+function forceArrival(count = getForcedArrivalCount()) {
+  const batchSize = sanitizeForcedArrivalCount(count);
+  const startId = state.nextId;
+  for (let i = 0; i < batchSize; i++) {
+    createArrivalAt(state.simTime);
+  }
+  const endId = state.nextId - 1;
+  const label = batchSize === 1
+    ? `forced arrival #${startId} → X=${state.N}`
+    : `forced arrivals #${startId}–#${endId} (${batchSize}) → X=${state.N}`;
+  logEvent('arrive', label);
   render();
 }
 
@@ -370,6 +394,7 @@ function renderStats() {
   }
   const fmt = (x) => !isFinite(x) ? '&infin;' : x.toFixed(3);
   setText('rhoTh', rho.toFixed(3));
+  setText('lambdaRealTh', lambda.toFixed(3));
   document.getElementById('LTh').innerHTML  = fmt(LTh);
   document.getElementById('LqTh').innerHTML = fmt(LqTh);
   document.getElementById('WTh').innerHTML  = fmt(WTh);
@@ -379,6 +404,7 @@ function renderStats() {
   // Empirical (time-averaged)
   const total = state.timeInState.reduce((a, b) => a + b, 0);
   if (total > 0) {
+    const lambdaRealEmp = arrivals / total;
     let Lemp = 0;
     state.timeInState.forEach((t, k) => { Lemp += k * t; });
     Lemp /= total;
@@ -390,12 +416,14 @@ function renderStats() {
     state.timeInState.forEach((t, k) => { if (k >= 1) Lq += (k - 1) * t; });
     Lq /= total;
     setText('rhoEmp', rhoEmp.toFixed(3));
+    setText('lambdaRealEmp', lambdaRealEmp.toFixed(3));
     setText('LEmp',  Lemp.toFixed(3));
     setText('LqEmp', Lq.toFixed(3));
     setText('p0Emp', p0emp.toFixed(3));
   } else {
-    setText('rhoEmp', '—'); setText('LEmp', '—');
-    setText('LqEmp', '—');  setText('p0Emp', '—');
+    setText('rhoEmp', '—'); setText('lambdaRealEmp', '—');
+    setText('LEmp', '—');   setText('LqEmp', '—');
+    setText('p0Emp', '—');
   }
   if (state.departures > 0) {
     setText('WEmp',  (state.sumSojourn / state.departures).toFixed(3));
@@ -984,7 +1012,10 @@ document.getElementById('playBtn').addEventListener('click', () => {
   if (state.running) lastFrame = null;
 });
 document.getElementById('stepBtn').addEventListener('click', stepOneEvent);
-document.getElementById('arriveBtn').addEventListener('click', forceArrival);
+document.getElementById('arriveBtn').addEventListener('click', () => forceArrival());
+document.getElementById('arrivalsPerForce').addEventListener('change', (e) => {
+  e.target.value = String(sanitizeForcedArrivalCount(e.target.value));
+});
 document.getElementById('departBtn').addEventListener('click', forceDeparture);
 document.getElementById('resetBtn').addEventListener('click', () => {
   state.running = false;
