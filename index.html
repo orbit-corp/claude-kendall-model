@@ -4,14 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>M/M/1 Queue Simulator</title>
-<link rel="stylesheet" href="styles.css?v=20260430-batch-arrivals-1">
+<link rel="stylesheet" href="styles.css?v=20260504-protected-mode-1">
 </head>
 <body data-theme="dark">
 
 <header>
   <h1>M/M/1 Queue Simulator</h1>
   <div class="header-actions">
-    <span class="subtitle">Poisson arrivals &lambda; &middot; Exponential service &mu; &middot; single server, FCFS, infinite buffer</span>
+    <span class="subtitle" id="headerSubtitle">Poisson arrivals &lambda; &middot; Exponential service &mu; &middot; single server, FCFS, infinite buffer</span>
     <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="true" aria-label="Switch to light mode">Light mode</button>
   </div>
 </header>
@@ -22,7 +22,7 @@
     <h2>Controls</h2>
     <div class="ctrl-grid">
       <div class="ctrl-item">
-        <label>Arrival rate &lambda; (per sim-second)</label>
+        <label id="lambdaLabel">Arrival rate &lambda; (per sim-second)</label>
         <div class="val" id="lambdaVal">1.00</div>
         <input type="range" id="lambda" min="0.05" max="3.00" step="0.05" value="1.00">
       </div>
@@ -37,12 +37,23 @@
         <input type="range" id="speed" min="-1" max="2.3" step="0.05" value="0">
         <div class="hint">Logarithmic: 0.1&times; &ndash; 200&times;</div>
       </div>
+      <div class="ctrl-item">
+        <label>Protected mode</label>
+        <button id="modeToggle" class="mode-toggle" type="button" aria-pressed="false">Plain M/M/1</button>
+        <div class="hint" id="modeHint">Arrivals go directly into the application queue.</div>
+      </div>
+      <div class="ctrl-item">
+        <label id="releaseLabel">Release rate g (per sim-second)</label>
+        <div class="val" id="releaseRateVal">0.90</div>
+        <input type="range" id="releaseRate" min="0.05" max="3.00" step="0.05" value="0.90" disabled>
+        <div class="hint" id="releaseHint">Used only in protected mode to admit users from the waiting room.</div>
+      </div>
     </div>
     <div class="btn-row">
       <button id="playBtn" class="primary">&#9654; Play</button>
       <button id="stepBtn">Step (1 event)</button>
       <div class="batch-arrival-control">
-        <label for="arrivalsPerForce">Forced arrivals at once</label>
+        <label for="arrivalsPerForce" id="forceArrivalsLabel">Forced arrivals at once</label>
         <div class="batch-arrival-inputs">
           <input type="number" id="arrivalsPerForce" min="1" step="1" value="1" inputmode="numeric">
           <button id="arriveBtn">Force arrivals</button>
@@ -61,30 +72,34 @@
   <!-- Queue visualization + stats -->
   <div class="grid-12">
     <section class="panel">
-      <h2>Queue &mdash; live state</h2>
+      <h2 id="queueTitle">Queue &mdash; live state</h2>
       <div class="canvas-wrap"><canvas id="queueCanvas"></canvas></div>
       <div class="legend">
-        <span><span class="sw" style="background: var(--server)"></span>Server (busy)</span>
-        <span><span class="sw" style="background: var(--customer-wait)"></span>Waiting customers</span>
-        <span><span class="sw" style="background: var(--server-idle)"></span>Server (idle)</span>
+        <span><span class="sw" id="legendBusySw" style="background: var(--server)"></span><span id="legendBusyText">Server (busy)</span></span>
+        <span><span class="sw" id="legendQueueSw" style="background: var(--customer-wait)"></span><span id="legendQueueText">Waiting customers</span></span>
+        <span><span class="sw" id="legendIdleSw" style="background: var(--server-idle)"></span><span id="legendIdleText">Server (idle)</span></span>
       </div>
     </section>
     <section class="panel">
       <h2>Metrics</h2>
       <table class="stats">
         <tr class="hdr"><td>Quantity</td><td>Empirical</td><td>Theory</td></tr>
-        <tr><td><span class="metric-note" tabindex="0" data-note="Long-run server load. In M/M/1 theory, rho = lambda/mu, so the theory column uses the slider values. Manual forced arrivals do not rewrite lambda itself, but they can still push the empirical system behavior away from theory.">Traffic intensity &rho;</span></td><td id="rhoEmp">&mdash;</td><td id="rhoTh">0.667</td></tr>
-        <tr><td><span class="metric-note" tabindex="0" data-note="Observed arrival throughput so far, computed as total arrivals divided by elapsed simulated time. This lets manual forced-arrival bursts show up directly in the dashboard.">Realized arrival rate &lambda;̂</span></td><td id="lambdaRealEmp">&mdash;</td><td id="lambdaRealTh">1.000</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Long-run backend server load. In protected mode, theory uses the effective admitted flow into the app rather than raw demand when the waiting-room gate is constraining traffic.">Traffic intensity &rho;<sub>app</sub></span></td><td id="rhoEmp">&mdash;</td><td id="rhoTh">0.667</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Observed raw demand so far, computed as total demand arrivals divided by elapsed simulated time. In plain mode this matches the arrival stream into the app; in protected mode it includes users still waiting outside the app.">Raw demand rate &lambda;̂<sub>raw</sub></span></td><td id="rawLambdaEmp">&mdash;</td><td id="rawLambdaTh">1.000</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Observed application arrival throughput so far. In protected mode, this is the admitted flow that actually enters the protected backend queue after the waiting-room gate.">App arrival rate &lambda;̂<sub>app</sub></span></td><td id="lambdaRealEmp">&mdash;</td><td id="lambdaRealTh">1.000</td></tr>
         <tr><td><span class="metric-note" tabindex="0" data-note="Average number of customers in the whole system, including anyone in service. Use it to judge total congestion, not just the waiting line.">Mean # in system L</span></td><td id="LEmp">&mdash;</td><td id="LTh">2.000</td></tr>
         <tr><td><span class="metric-note" tabindex="0" data-note="Average number of customers waiting for service. This isolates queue buildup without counting the job currently being served.">Mean # in queue L<sub>q</sub></span></td><td id="LqEmp">&mdash;</td><td id="LqTh">1.333</td></tr>
         <tr><td><span class="metric-note" tabindex="0" data-note="Average total time a customer spends in the system from arrival to departure. It is the end-to-end delay seen by a customer.">Mean sojourn W</span></td><td id="WEmp">&mdash;</td><td id="WTh">2.000</td></tr>
         <tr><td><span class="metric-note" tabindex="0" data-note="Average time a customer waits before service begins. It measures queueing delay alone, separate from service time.">Mean wait W<sub>q</sub></span></td><td id="WqEmp">&mdash;</td><td id="WqTh">1.333</td></tr>
         <tr><td><span class="metric-note" tabindex="0" data-note="Probability that the system is empty. It shows how often the server has no job to work on.">Idle prob. &pi;<sub>0</sub></span></td><td id="p0Emp">&mdash;</td><td id="p0Th">0.333</td></tr>
         <tr class="hdr"><td>Counters</td><td></td><td></td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Current queueing architecture. Plain mode sends arrivals directly to the app; protected mode inserts an external waiting room with a rate-limited admission gate.">Mode</span></td><td colspan="2" id="modeVal" style="text-align:right">Plain M/M/1</td></tr>
         <tr><td><span class="metric-note" tabindex="0" data-note="Current position of the simulation clock. It tells you how long the queue has been evolving in simulated time.">Sim time</span></td><td colspan="2" id="simTime" style="text-align:right">0.00</td></tr>
-        <tr><td><span class="metric-note" tabindex="0" data-note="Number of arrival events observed so far. It tracks the total input flow into the queue.">Arrivals</span></td><td colspan="2" id="nArr" style="text-align:right">0</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Number of raw demand arrivals observed so far, before any waiting-room gating is applied.">Demand arrivals</span></td><td colspan="2" id="nRawArr" style="text-align:right">0</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Number of users admitted into the protected app queue so far. In plain mode this is the same as total arrivals.">App arrivals</span></td><td colspan="2" id="nArr" style="text-align:right">0</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Users currently waiting outside the protected backend. In plain mode this remains zero because there is no external waiting room.">Waiting room</span></td><td colspan="2" id="waitingRoomVal" style="text-align:right">0</td></tr>
         <tr><td><span class="metric-note" tabindex="0" data-note="Number of completed services so far. It tracks the output flow leaving the queue.">Departures</span></td><td colspan="2" id="nDep" style="text-align:right">0</td></tr>
-        <tr><td><span class="metric-note" tabindex="0" data-note="Current number of customers in the system, including anyone in service. It is the live state driving the queue diagram and charts.">Now in system X(t)</span></td><td colspan="2" id="nowN" style="text-align:right">0</td></tr>
+        <tr><td><span class="metric-note" tabindex="0" data-note="Current number of customers inside the protected application system, including anyone in service. It is the live backend state driving the charts.">Now in app X(t)</span></td><td colspan="2" id="nowN" style="text-align:right">0</td></tr>
       </table>
     </section>
   </div>
@@ -143,6 +158,6 @@
   M/M/1 simulator &mdash; inverse-CDF exponential RNG, discrete-event engine, time-averaged statistics.
 </footer>
 
-<script src="app.js?v=20260430-batch-arrivals-1" defer></script>
+<script src="app.js?v=20260504-protected-mode-1" defer></script>
 </body>
 </html>
