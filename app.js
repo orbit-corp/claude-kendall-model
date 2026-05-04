@@ -6,16 +6,21 @@
 const state = {
   lambda: 1.0,
   mu:     1.5,
+  releaseRate: 0.9,
+  protectedMode: false,
   speed:  1.0,        // sim-seconds per real-second
   running: false,
   simTime: 0.0,
   N: 0,               // current system size X(t)
   nextArrivalT: 0.0,  // absolute sim time of next arrival
+  nextAdmissionT: Infinity,
   nextDepartureT: Infinity, // Infinity if server idle
+  waitingRoom: [],    // users waiting outside the protected application
   queue: [],          // array of customer objects in the waiting line (excludes the one in service)
   inService: null,    // customer currently being served (or null)
   nextId: 1,
   // Counters
+  rawArrivals: 0,
   arrivals: 0,
   departures: 0,
   // Time-averaged stats accumulators
@@ -97,13 +102,19 @@ function expRand(rate) {
   return -Math.log(1 - Math.random()) / rate;
 }
 
+function getEffectiveLambda() {
+  return state.protectedMode ? Math.min(state.lambda, state.releaseRate) : state.lambda;
+}
+
 // ---- Initialization / reset ----
 function reset() {
   state.simTime = 0;
   state.N = 0;
+  state.waitingRoom = [];
   state.queue = [];
   state.inService = null;
   state.nextId = 1;
+  state.rawArrivals = 0;
   state.arrivals = 0;
   state.departures = 0;
   state.timeInState = [];
@@ -118,12 +129,21 @@ function reset() {
   transientCache.result = null;
   document.getElementById('logList').innerHTML = '';
   scheduleNextArrival();
+  state.nextAdmissionT = Infinity;
   state.nextDepartureT = Infinity;
   render();
 }
 
 function scheduleNextArrival() {
   state.nextArrivalT = state.simTime + expRand(state.lambda);
+}
+
+function scheduleNextAdmission() {
+  if (!state.protectedMode || state.waitingRoom.length === 0) {
+    state.nextAdmissionT = Infinity;
+    return;
+  }
+  state.nextAdmissionT = state.simTime + expRand(state.releaseRate);
 }
 
 // Record time accumulated at current state before transition
@@ -155,8 +175,16 @@ function logEvent(type, info) {
   while (ul.childNodes.length > state.logMax) ul.removeChild(ul.lastChild);
 }
 
-function createArrivalAt(time) {
-  const c = { id: state.nextId++, arriveT: time };
+function createDemandAt(time) {
+  const demand = { id: state.nextId++, demandArriveT: time };
+  state.rawArrivals++;
+  state.waitingRoom.push(demand);
+  if (state.nextAdmissionT === Infinity) scheduleNextAdmission();
+  return demand;
+}
+
+function createArrivalAt(time, seed = null) {
+  const c = seed ? { ...seed, arriveT: time } : { id: state.nextId++, demandArriveT: time, arriveT: time };
   state.arrivals++;
   if (state.inService === null) {
     c.serviceStartT = time;
@@ -176,9 +204,29 @@ function createArrivalAt(time) {
 function processArrival() {
   accumulateTime(state.nextArrivalT);
   state.simTime = state.nextArrivalT;
-  const c = createArrivalAt(state.simTime);
+  let c;
+  if (state.protectedMode) {
+    c = createDemandAt(state.simTime);
+    logEvent('arrive', `demand #${c.id} → waiting room=${state.waitingRoom.length}`);
+  } else {
+    state.rawArrivals++;
+    c = createArrivalAt(state.simTime);
+    logEvent('arrive', `arrival #${c.id} → X=${state.N}`);
+  }
   scheduleNextArrival();
-  logEvent('arrive', `arrival #${c.id} → X=${state.N}`);
+}
+
+function processAdmission() {
+  if (state.waitingRoom.length === 0) {
+    state.nextAdmissionT = Infinity;
+    return;
+  }
+  accumulateTime(state.nextAdmissionT);
+  state.simTime = state.nextAdmissionT;
+  const demand = state.waitingRoom.shift();
+  const c = createArrivalAt(state.simTime, demand);
+  if (state.waitingRoom.length > 0) scheduleNextAdmission(); else state.nextAdmissionT = Infinity;
+  logEvent('arrive', `admit #${c.id} → app X=${state.N}, room=${state.waitingRoom.length}`);
 }
 
 function processDeparture() {
@@ -216,7 +264,7 @@ function processDeparture() {
 function advanceTo(targetT) {
   let safety = 0;
   while (true) {
-    const nextT = Math.min(state.nextArrivalT, state.nextDepartureT);
+    const nextT = Math.min(state.nextArrivalT, state.nextAdmissionT, state.nextDepartureT);
     if (nextT > targetT) {
       // no event in this window → just roll clock forward for time averaging
       accumulateTime(targetT);
@@ -225,6 +273,8 @@ function advanceTo(targetT) {
     }
     if (nextT === state.nextArrivalT) {
       processArrival();
+    } else if (nextT === state.nextAdmissionT) {
+      processAdmission();
     } else {
       processDeparture();
     }
@@ -239,9 +289,11 @@ function advanceTo(targetT) {
 
 // Manual single-event step (ignoring clock)
 function stepOneEvent() {
-  const nextT = Math.min(state.nextArrivalT, state.nextDepartureT);
+  const nextT = Math.min(state.nextArrivalT, state.nextAdmissionT, state.nextDepartureT);
   if (!isFinite(nextT)) return;
-  if (nextT === state.nextArrivalT) processArrival(); else processDeparture();
+  if (nextT === state.nextArrivalT) processArrival();
+  else if (nextT === state.nextAdmissionT) processAdmission();
+  else processDeparture();
   render();
 }
 
@@ -260,13 +312,19 @@ function getForcedArrivalCount() {
 function forceArrival(count = getForcedArrivalCount()) {
   const batchSize = sanitizeForcedArrivalCount(count);
   const startId = state.nextId;
+  if (!state.protectedMode) state.rawArrivals += batchSize;
   for (let i = 0; i < batchSize; i++) {
-    createArrivalAt(state.simTime);
+    if (state.protectedMode) createDemandAt(state.simTime);
+    else createArrivalAt(state.simTime);
   }
   const endId = state.nextId - 1;
-  const label = batchSize === 1
-    ? `forced arrival #${startId} → X=${state.N}`
-    : `forced arrivals #${startId}–#${endId} (${batchSize}) → X=${state.N}`;
+  const label = state.protectedMode
+    ? (batchSize === 1
+      ? `forced demand #${startId} → waiting room=${state.waitingRoom.length}`
+      : `forced demand #${startId}–#${endId} (${batchSize}) → waiting room=${state.waitingRoom.length}`)
+    : (batchSize === 1
+      ? `forced arrival #${startId} → X=${state.N}`
+      : `forced arrivals #${startId}–#${endId} (${batchSize}) → X=${state.N}`);
   logEvent('arrive', label);
   render();
 }
@@ -304,48 +362,136 @@ function renderQueueVisual() {
   ctx.fillStyle = colors.canvasBg;
   ctx.fillRect(0, 0, w, h);
 
-  const cx = w - 70;     // server center x
   const cy = h / 2;
   const r = 26;
-  // Server box
-  ctx.lineWidth = 2;
+
+  const drawArrow = (fromX, toX) => {
+    ctx.strokeStyle = colors.arrow;
+    ctx.beginPath();
+    ctx.moveTo(fromX, cy);
+    ctx.lineTo(toX, cy);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(toX, cy);
+    ctx.lineTo(toX - 6, cy - 4);
+    ctx.lineTo(toX - 6, cy + 4);
+    ctx.closePath();
+    ctx.fillStyle = colors.arrow;
+    ctx.fill();
+  };
+
+  const drawServer = (cx) => {
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = colors.line;
+    ctx.fillStyle = state.inService ? colors.server : colors.serverIdle;
+    ctx.beginPath();
+    ctx.roundRect(cx - r, cy - r, 2 * r, 2 * r, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = state.inService ? colors.onAccent : colors.muted;
+    ctx.font = '600 11px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(state.inService ? `#${state.inService.id}` : 'idle', cx, cy);
+    ctx.fillStyle = colors.muted;
+    ctx.font = '11px -apple-system, sans-serif';
+    ctx.fillText('Server', cx, cy + r + 14);
+  };
+
+  if (!state.protectedMode) {
+    const cx = w - 70;
+    drawServer(cx);
+    drawArrow(cx - r - 20, cx - r - 4);
+
+    const qSpacing = 22;
+    const qStart = cx - r - 30;
+    const qCount = state.queue.length;
+    for (let i = 0; i < Math.min(qCount, 25); i++) {
+      const x = qStart - i * qSpacing;
+      if (x < 20) break;
+      ctx.beginPath();
+      ctx.arc(x, cy, 9, 0, 2 * Math.PI);
+      ctx.fillStyle = colors.customerWait;
+      ctx.strokeStyle = colors.customer;
+      ctx.lineWidth = 1.5;
+      ctx.fill();
+      ctx.stroke();
+    }
+    if (qCount > 25) {
+      const x = qStart - 25 * qSpacing;
+      ctx.fillStyle = colors.muted;
+      ctx.textAlign = 'left';
+      ctx.font = '11px -apple-system, sans-serif';
+      ctx.fillText(`+${qCount - 25} more`, Math.max(x, 8), cy);
+    }
+    ctx.fillStyle = colors.muted;
+    ctx.textAlign = 'left';
+    ctx.font = '11px -apple-system, sans-serif';
+    ctx.fillText(`Waiting: ${qCount}`, 12, 20);
+    ctx.textAlign = 'right';
+    ctx.fillText(`X(t) = ${state.N}`, w - 12, 20);
+    return;
+  }
+
+  const roomCount = state.waitingRoom.length;
+  const appQueueCount = state.queue.length;
+  const serverX = w - 70;
+  const gateX = Math.floor(w * 0.5);
+  const roomStart = 34;
+  const roomEnd = gateX - 60;
+  const roomSpacing = 18;
+  const roomVisible = Math.max(1, Math.floor((roomEnd - roomStart) / roomSpacing));
+  const appQueueStart = serverX - r - 36;
+  const appSpacing = 22;
+  const topLabelY = 20;
+  const stageLabelY = cy - 46;
+
+  // Waiting room band
   ctx.strokeStyle = colors.line;
-  ctx.fillStyle = state.inService ? colors.server : colors.serverIdle;
+  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(cx - r, cy - r, 2*r, 2*r, 8);
-  ctx.fill();
+  ctx.roundRect(roomStart - 12, cy - 34, roomEnd - roomStart + 24, 68, 14);
   ctx.stroke();
-  ctx.fillStyle = state.inService ? colors.onAccent : colors.muted;
-  ctx.font = '600 11px -apple-system, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(state.inService ? `#${state.inService.id}` : 'idle', cx, cy);
-  // "Server" label
+  for (let i = 0; i < Math.min(roomCount, roomVisible); i++) {
+    const x = roomEnd - i * roomSpacing;
+    if (x < roomStart) break;
+    ctx.beginPath();
+    ctx.arc(x, cy, 8, 0, 2 * Math.PI);
+    ctx.fillStyle = colors.customer;
+    ctx.fill();
+  }
+  if (roomCount > roomVisible) {
+    ctx.fillStyle = colors.muted;
+    ctx.textAlign = 'left';
+    ctx.font = '11px -apple-system, sans-serif';
+    ctx.fillText(`+${roomCount - roomVisible} more`, roomStart - 2, cy + 24);
+  }
   ctx.fillStyle = colors.muted;
+  ctx.textAlign = 'left';
   ctx.font = '11px -apple-system, sans-serif';
-  ctx.fillText('Server', cx, cy + r + 14);
+  ctx.fillText(`Waiting room: ${roomCount}`, 12, topLabelY);
+  ctx.fillText('External waiting room', roomStart, stageLabelY);
 
-  // Arrow from queue to server
-  ctx.strokeStyle = colors.arrow;
+  // Gate
   ctx.beginPath();
-  ctx.moveTo(cx - r - 20, cy);
-  ctx.lineTo(cx - r - 4, cy);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(cx - r - 4, cy);
-  ctx.lineTo(cx - r - 10, cy - 4);
-  ctx.lineTo(cx - r - 10, cy + 4);
-  ctx.closePath();
-  ctx.fillStyle = colors.arrow;
+  ctx.roundRect(gateX - 12, cy - 42, 24, 84, 8);
+  ctx.fillStyle = colors.accent;
   ctx.fill();
+  ctx.strokeStyle = colors.accent;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = colors.onAccent;
+  ctx.textAlign = 'center';
+  ctx.font = '600 10px -apple-system, sans-serif';
+  ctx.fillText('Gate', gateX, cy);
 
-  // Waiting customers line
-  const qSpacing = 22;
-  const qStart = cx - r - 30;
-  const qCount = state.queue.length;
-  for (let i = 0; i < Math.min(qCount, 25); i++) {
-    const x = qStart - i * qSpacing;
-    if (x < 20) break;
+  drawArrow(roomEnd + 18, gateX - 16);
+  drawArrow(gateX + 16, serverX - r - 12);
+
+  // App queue
+  for (let i = 0; i < Math.min(appQueueCount, 16); i++) {
+    const x = appQueueStart - i * appSpacing;
+    if (x < gateX + 26) break;
     ctx.beginPath();
     ctx.arc(x, cy, 9, 0, 2 * Math.PI);
     ctx.fillStyle = colors.customerWait;
@@ -354,30 +500,33 @@ function renderQueueVisual() {
     ctx.fill();
     ctx.stroke();
   }
-  // "+N more" if overflow
-  if (qCount > 25) {
-    const x = qStart - 25 * qSpacing;
+  if (appQueueCount > 16) {
     ctx.fillStyle = colors.muted;
     ctx.textAlign = 'left';
     ctx.font = '11px -apple-system, sans-serif';
-    ctx.fillText(`+${qCount - 25} more`, Math.max(x, 8), cy);
+    ctx.fillText(`+${appQueueCount - 16} more`, gateX + 28, cy - 16);
   }
-  // Queue label
+
+  drawServer(serverX);
   ctx.fillStyle = colors.muted;
-  ctx.textAlign = 'left';
-  ctx.font = '11px -apple-system, sans-serif';
-  ctx.fillText(`Waiting: ${qCount}`, 12, 20);
   ctx.textAlign = 'right';
-  ctx.fillText(`X(t) = ${state.N}`, w - 12, 20);
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.fillText(`App queue: ${appQueueCount} • X(t) = ${state.N}`, w - 12, topLabelY);
+  ctx.textAlign = 'left';
+  ctx.fillText('Protected application', gateX + 42, stageLabelY);
 }
 
 function renderStats() {
-  const { lambda, mu, simTime, arrivals, departures, N } = state;
-  const rho = lambda / mu;
+  const { lambda, mu, releaseRate, simTime, rawArrivals, arrivals, departures, N } = state;
+  const effectiveLambda = getEffectiveLambda();
+  const rho = effectiveLambda / mu;
   const setText = (id, v) => { document.getElementById(id).textContent = v; };
+  setText('modeVal', state.protectedMode ? 'Protected waiting room' : 'Plain M/M/1');
   setText('simTime', simTime.toFixed(2));
+  setText('nRawArr', rawArrivals);
   setText('nArr', arrivals);
   setText('nDep', departures);
+  setText('waitingRoomVal', state.waitingRoom.length);
   setText('nowN', N);
 
   // Theory
@@ -394,7 +543,8 @@ function renderStats() {
   }
   const fmt = (x) => !isFinite(x) ? '&infin;' : x.toFixed(3);
   setText('rhoTh', rho.toFixed(3));
-  setText('lambdaRealTh', lambda.toFixed(3));
+  setText('rawLambdaTh', lambda.toFixed(3));
+  setText('lambdaRealTh', (state.protectedMode ? Math.min(lambda, releaseRate) : lambda).toFixed(3));
   document.getElementById('LTh').innerHTML  = fmt(LTh);
   document.getElementById('LqTh').innerHTML = fmt(LqTh);
   document.getElementById('WTh').innerHTML  = fmt(WTh);
@@ -404,6 +554,7 @@ function renderStats() {
   // Empirical (time-averaged)
   const total = state.timeInState.reduce((a, b) => a + b, 0);
   if (total > 0) {
+    const rawLambdaEmp = rawArrivals / total;
     const lambdaRealEmp = arrivals / total;
     let Lemp = 0;
     state.timeInState.forEach((t, k) => { Lemp += k * t; });
@@ -416,13 +567,15 @@ function renderStats() {
     state.timeInState.forEach((t, k) => { if (k >= 1) Lq += (k - 1) * t; });
     Lq /= total;
     setText('rhoEmp', rhoEmp.toFixed(3));
+    setText('rawLambdaEmp', rawLambdaEmp.toFixed(3));
     setText('lambdaRealEmp', lambdaRealEmp.toFixed(3));
     setText('LEmp',  Lemp.toFixed(3));
     setText('LqEmp', Lq.toFixed(3));
     setText('p0Emp', p0emp.toFixed(3));
   } else {
-    setText('rhoEmp', '—'); setText('lambdaRealEmp', '—');
-    setText('LEmp', '—');   setText('LqEmp', '—');
+    setText('rhoEmp', '—'); setText('rawLambdaEmp', '—');
+    setText('lambdaRealEmp', '—'); setText('LEmp', '—');
+    setText('LqEmp', '—');
     setText('p0Emp', '—');
   }
   if (state.departures > 0) {
@@ -434,19 +587,36 @@ function renderStats() {
 }
 
 function renderStability() {
-  const rho = state.lambda / state.mu;
+  const rawRho = state.lambda / state.mu;
+  const backendRho = getEffectiveLambda() / state.mu;
   const el = document.getElementById('stability');
   const text = document.getElementById('stabilityText');
   el.classList.remove('stable', 'warn', 'unstable');
-  if (rho < 0.85) {
-    el.classList.add('stable');
-    text.innerHTML = `Stable: &rho; = ${rho.toFixed(3)} &lt; 1. Steady-state &pi;<sub>k</sub> = (1&minus;&rho;)&rho;<sup>k</sup> exists.`;
-  } else if (rho < 1) {
-    el.classList.add('warn');
-    text.innerHTML = `Heavy traffic: &rho; = ${rho.toFixed(3)} approaching 1. Queue length and wait diverge sharply.`;
-  } else {
+  if (!state.protectedMode) {
+    if (rawRho < 0.85) {
+      el.classList.add('stable');
+      text.innerHTML = `Stable: &rho; = ${rawRho.toFixed(3)} &lt; 1. Steady-state &pi;<sub>k</sub> = (1&minus;&rho;)&rho;<sup>k</sup> exists.`;
+    } else if (rawRho < 1) {
+      el.classList.add('warn');
+      text.innerHTML = `Heavy traffic: &rho; = ${rawRho.toFixed(3)} approaching 1. Queue length and wait diverge sharply.`;
+    } else {
+      el.classList.add('unstable');
+      text.innerHTML = `UNSTABLE: &rho; = ${rawRho.toFixed(3)} &ge; 1. No stationary distribution &mdash; X(t) &rarr; &infin;.`;
+    }
+    return;
+  }
+  if (backendRho >= 1) {
     el.classList.add('unstable');
-    text.innerHTML = `UNSTABLE: &rho; = ${rho.toFixed(3)} &ge; 1. No stationary distribution &mdash; X(t) &rarr; &infin;.`;
+    text.innerHTML = `UNSTABLE backend: &rho;<sub>app</sub> = ${backendRho.toFixed(3)} &ge; 1. Even with a waiting-room gate, the protected application queue has no stationary distribution.`;
+  } else if (state.lambda > state.releaseRate) {
+    el.classList.add('warn');
+    text.innerHTML = `Protected backend stable at &rho;<sub>app</sub> = ${backendRho.toFixed(3)}, but the waiting room grows because &lambda;<sub>raw</sub> = ${state.lambda.toFixed(3)} exceeds gate rate g = ${state.releaseRate.toFixed(3)}.`;
+  } else if (backendRho < 0.85) {
+    el.classList.add('stable');
+    text.innerHTML = `Protected backend stable: &rho;<sub>app</sub> = ${backendRho.toFixed(3)} with demand admitted fast enough that the waiting room does not build.`;
+  } else if (backendRho < 1) {
+    el.classList.add('warn');
+    text.innerHTML = `Protected backend in heavy traffic: &rho;<sub>app</sub> = ${backendRho.toFixed(3)} approaching 1. The gate prevents overload, but admitted users still experience sharp queueing effects.`;
   }
 }
 
@@ -507,7 +677,7 @@ function renderTimeSeries() {
   }
 
   // Theoretical L
-  const rho = state.lambda / state.mu;
+  const rho = getEffectiveLambda() / state.mu;
   if (rho < 1) {
     const L = rho / (1 - rho);
     if (L <= maxX) {
@@ -575,7 +745,7 @@ function renderDistribution() {
   const plotH = h - padT - padB;
 
   const total = state.timeInState.reduce((a, b) => a + b, 0);
-  const rho = state.lambda / state.mu;
+  const rho = getEffectiveLambda() / state.mu;
   const stable = rho < 1;
 
   // how many bins
@@ -756,13 +926,14 @@ function computeTransientDistribution(lambda, mu, t) {
 function getTransientSnapshot() {
   const tQuantum = state.running ? 0.25 : 0.05;
   const sampledT = Math.max(0, Math.round(state.simTime / tQuantum) * tQuantum);
-  const key = `${state.lambda.toFixed(3)}|${state.mu.toFixed(3)}|${sampledT.toFixed(2)}`;
+  const lambda = getEffectiveLambda();
+  const key = `${lambda.toFixed(3)}|${state.mu.toFixed(3)}|${sampledT.toFixed(2)}|${state.protectedMode ? 'protected' : 'plain'}`;
   const now = performance.now();
   if (transientCache.key === key && transientCache.result) return transientCache.result;
   if (state.running && transientCache.result && now - transientCache.computedAt < 120) {
     return transientCache.result;
   }
-  const result = computeTransientDistribution(state.lambda, state.mu, sampledT);
+  const result = computeTransientDistribution(lambda, state.mu, sampledT);
   transientCache.key = key;
   transientCache.computedAt = now;
   transientCache.result = result;
@@ -866,7 +1037,7 @@ function renderBurke() {
   const plotH = h - padT - padB;
 
   const data = state.interDepartures;
-  const lambda = state.lambda;
+  const lambda = getEffectiveLambda();
   // Choose range: up to 5/λ
   const xMax = Math.max(0.5, 5 / lambda);
   const bins = 30;
@@ -991,10 +1162,68 @@ function updateMu(v) {
   }
   render();
 }
+function updateReleaseRate(v) {
+  state.releaseRate = v;
+  document.getElementById('releaseRateVal').textContent = v.toFixed(2);
+  if (state.protectedMode) {
+    scheduleNextAdmission();
+    render();
+  }
+}
 function updateSpeed(logVal) {
   const v = Math.pow(10, logVal);
   state.speed = v;
   document.getElementById('speedVal').textContent = v < 1 ? `${v.toFixed(2)}×` : `${v.toFixed(1)}×`;
+}
+
+function syncModeControls() {
+  const modeButton = document.getElementById('modeToggle');
+  const modeHint = document.getElementById('modeHint');
+  const releaseInput = document.getElementById('releaseRate');
+  const releaseHint = document.getElementById('releaseHint');
+  const headerSubtitle = document.getElementById('headerSubtitle');
+  const lambdaLabel = document.getElementById('lambdaLabel');
+  const forceLabel = document.getElementById('forceArrivalsLabel');
+  const arriveButton = document.getElementById('arriveBtn');
+  const queueTitle = document.getElementById('queueTitle');
+  const legendBusyText = document.getElementById('legendBusyText');
+  const legendQueueText = document.getElementById('legendQueueText');
+  const legendIdleText = document.getElementById('legendIdleText');
+  const legendQueueSw = document.getElementById('legendQueueSw');
+  const legendIdleSw = document.getElementById('legendIdleSw');
+
+  modeButton.textContent = state.protectedMode ? 'Protected waiting room' : 'Plain M/M/1';
+  modeButton.setAttribute('aria-pressed', String(state.protectedMode));
+  modeButton.classList.toggle('active', state.protectedMode);
+  releaseInput.disabled = !state.protectedMode;
+
+  if (state.protectedMode) {
+    modeHint.textContent = 'Raw demand enters an external waiting room, then a gate admits users into the protected app.';
+    releaseHint.textContent = 'The gate releases users from the waiting room into the app at rate g.';
+    headerSubtitle.innerHTML = 'Raw demand &lambda; &middot; admission gate g &middot; protected app service &mu;';
+    lambdaLabel.innerHTML = 'Raw demand rate &lambda; (per sim-second)';
+    forceLabel.textContent = 'Forced demand at once';
+    arriveButton.textContent = 'Force demand';
+    queueTitle.innerHTML = 'Protected app &mdash; live state';
+    legendBusyText.textContent = 'Server (busy)';
+    legendQueueText.textContent = 'App queue';
+    legendIdleText.textContent = 'Waiting room';
+    legendQueueSw.style.background = 'var(--customer-wait)';
+    legendIdleSw.style.background = 'var(--customer)';
+  } else {
+    modeHint.textContent = 'Arrivals go directly into the application queue.';
+    releaseHint.textContent = 'Used only in protected mode to admit users from the waiting room.';
+    headerSubtitle.innerHTML = 'Poisson arrivals &lambda; &middot; Exponential service &mu; &middot; single server, FCFS, infinite buffer';
+    lambdaLabel.innerHTML = 'Arrival rate &lambda; (per sim-second)';
+    forceLabel.textContent = 'Forced arrivals at once';
+    arriveButton.textContent = 'Force arrivals';
+    queueTitle.innerHTML = 'Queue &mdash; live state';
+    legendBusyText.textContent = 'Server (busy)';
+    legendQueueText.textContent = 'Waiting customers';
+    legendIdleText.textContent = 'Server (idle)';
+    legendQueueSw.style.background = 'var(--customer-wait)';
+    legendIdleSw.style.background = 'var(--server-idle)';
+  }
 }
 
 document.getElementById('themeToggle').addEventListener('click', () => {
@@ -1004,7 +1233,15 @@ document.getElementById('themeToggle').addEventListener('click', () => {
 
 document.getElementById('lambda').addEventListener('input', e => updateLambda(parseFloat(e.target.value)));
 document.getElementById('mu').addEventListener('input',     e => updateMu(parseFloat(e.target.value)));
+document.getElementById('releaseRate').addEventListener('input', e => updateReleaseRate(parseFloat(e.target.value)));
 document.getElementById('speed').addEventListener('input',  e => updateSpeed(parseFloat(e.target.value)));
+document.getElementById('modeToggle').addEventListener('click', () => {
+  state.running = false;
+  document.getElementById('playBtn').innerHTML = '&#9654; Play';
+  state.protectedMode = !state.protectedMode;
+  syncModeControls();
+  reset();
+});
 
 document.getElementById('playBtn').addEventListener('click', () => {
   state.running = !state.running;
@@ -1035,8 +1272,10 @@ document.addEventListener('keydown', (e) => {
 
 // Init
 initTheme();
+syncModeControls();
 updateLambda(parseFloat(document.getElementById('lambda').value));
 updateMu(parseFloat(document.getElementById('mu').value));
+updateReleaseRate(parseFloat(document.getElementById('releaseRate').value));
 updateSpeed(parseFloat(document.getElementById('speed').value));
 reset();
 requestAnimationFrame(frame);
