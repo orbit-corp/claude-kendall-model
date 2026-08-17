@@ -882,7 +882,7 @@ function computeTransientDistribution(lambda, mu, t) {
   }
 
   const minDisplayK = 10;
-  const maxDisplayK = 18;
+  const maxDisplayK = stable ? 18 : 32;
   let idealK = minDisplayK;
   let cumulative = 0;
   for (let k = 0; k < dist.length; k++) {
