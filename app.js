@@ -923,6 +923,24 @@ function computeTransientDistribution(lambda, mu, t) {
   };
 }
 
+function drawTransientOverflowNotice(ctx, colors, x, y, width, hiddenMass, displayK) {
+  const pct = hiddenMass * 100;
+  const message = `Most transient mass lies above k=${displayK} (${pct.toFixed(0)}% hidden)`;
+  const boxHeight = 24;
+  ctx.fillStyle = colors.canvasBg;
+  ctx.globalAlpha = 0.88;
+  ctx.fillRect(x, y, width, boxHeight);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = colors.warn || colors.err;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, width, boxHeight);
+  ctx.fillStyle = colors.warn || colors.err;
+  ctx.font = '600 11px -apple-system, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(message, x + 8, y + boxHeight / 2);
+}
+
 function getTransientSnapshot() {
   const tQuantum = state.running ? 0.25 : 0.05;
   const sampledT = Math.max(0, Math.round(state.simTime / tQuantum) * tQuantum);
@@ -1004,6 +1022,10 @@ function renderTransientDistribution() {
   ctx.textAlign = 'right';
   ctx.fillStyle = colors.axis;
   ctx.fillText(`t=${sampleTime.toFixed(2)}`, w - 6, padT + 4);
+
+  if (!stable && hiddenMass > 0.25) {
+    drawTransientOverflowNotice(ctx, colors, padL + 8, padT + 8, Math.min(plotW - 16, 280), hiddenMass, displayK);
+  }
 
   if (hint) {
     let message;
